@@ -43,13 +43,13 @@ impl fmt::Display for BaudRate {
     }
 }
 
-const BACK_ARROW_ICON: egui::ImageSource = egui::include_image!("../assets/arrow_back_FILL1_wght400_GRAD0_opsz24.png");
-const FORWARD_ARROW_ICON: egui::ImageSource = egui::include_image!("../assets/arrow_forward_FILL1_wght400_GRAD0_opsz24.png");
-const HOME_ICON: egui::ImageSource = egui::include_image!("../assets/home_FILL1_wght400_GRAD0_opsz24.png");
-const PLAY_ARROW_ICON: egui::ImageSource = egui::include_image!("../assets/play_arrow_FILL1_wght400_GRAD0_opsz24.png");
-const STOP_ICON: egui::ImageSource = egui::include_image!("../assets/stop_FILL1_wght400_GRAD0_opsz24.png");
-const PAUSE_ICON: egui::ImageSource = egui::include_image!("../assets/pause_FILL1_wght400_GRAD0_opsz24.png");
-const USB_ICON: egui::ImageSource = egui::include_image!("../assets/usb_FILL1_wght400_GRAD0_opsz24.png");
+const BACK_ARROW_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/arrow_back_FILL1_wght400_GRAD0_opsz24.png");
+const FORWARD_ARROW_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/arrow_forward_FILL1_wght400_GRAD0_opsz24.png");
+const HOME_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/home_FILL1_wght400_GRAD0_opsz24.png");
+const PLAY_ARROW_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/play_arrow_FILL1_wght400_GRAD0_opsz24.png");
+const STOP_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/stop_FILL1_wght400_GRAD0_opsz24.png");
+const PAUSE_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/pause_FILL1_wght400_GRAD0_opsz24.png");
+const USB_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/usb_FILL1_wght400_GRAD0_opsz24.png");
 
 
 
@@ -204,31 +204,6 @@ impl TensileTestingApp {
                             }
                         },
                     }
-                    
-                    // if matches!(self.connection_state, ConnectionState::Connected) {
-                    //     if full_centered_button(ui, "Disconnect").clicked() {
-                    //         self.connection_state = ConnectionState::Disconnected
-                    //     }
-                    // } else {
-                    //     if full_centered_button(ui, "Connect").clicked() {
-                    //         self.connection_state = ConnectionState::Connecting;
-
-                    //         let bru32 = self.baud_rate.parse::<u32>().unwrap();
-
-                    //         match serialport::new(&self.serial_port, bru32).open() {
-                    //             Ok(_)  => {
-                    //                 self.connection_state = ConnectionState::Connected;
-                    //             }
-                    //             Err(err) => {
-                    //                 self.connection_state = ConnectionState::Disconnected;
-                    //                 eprintln!("Failed {err}")
-                    //             },
-                    //         }
-
-                    //     }
-
-
-                    // }
             });
         }).fully_open();
 
@@ -237,7 +212,7 @@ impl TensileTestingApp {
                 ui.vertical(|ui| {
                 ui.add_enabled_ui(!matches!(self.connection_state, ConnectionState::Disconnected), |ui| {
                     ui.columns(3, |columns| {
-                        columns[0].add(egui::Button::image_and_text(PLAY_ARROW_ICON, "Start"));
+                        columns[0].add(egui::Button::image_and_text(PLAY_ARROW_ICON, "Start").fill(egui::Color32::from_rgb(0, 68, 204)));
                         columns[1].add(egui::Button::image_and_text(PAUSE_ICON, "Pause"));
                         columns[2].add(egui::Button::image_and_text(STOP_ICON, "Cancel"))
                     });
@@ -300,8 +275,6 @@ impl eframe::App for TensileTestingApp {
                     });
                     ui.add_space(16.0);
                 }
-
-                egui::widgets::global_dark_light_mode_buttons(ui);
             });
         });
 
