@@ -5,6 +5,8 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use egui_plot::{Line, Plot, PlotPoints};
 
+mod controller;
+
 #[derive(PartialEq, Debug, Clone, Copy)]
 enum ConnectionState {
     Connecting,
@@ -78,6 +80,9 @@ pub struct TensileTestingApp {
     connection_state: ConnectionState,
     serial_port: String,
     baud_rate: String,
+
+    #[serde(skip)]
+    serial_interface: Option<Box<dyn serialport::SerialPort>>,
 }
 
 impl Default for TensileTestingApp {
@@ -87,6 +92,7 @@ impl Default for TensileTestingApp {
             user_preferences: UserPreferences::default(),
             serial_port: Default::default(),
             baud_rate: Default::default(),
+            serial_interface : None,
         }
     }
 }
@@ -124,19 +130,21 @@ impl TensileTestingApp {
     }
     
     fn panel_ui(&mut self, ui: &mut egui::Ui) {
-        ui.add_visible_ui(is_serial_connected(&self.connection_state), |ui| {
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                let state = ConnectionState::to_string(&self.connection_state);
-                ui.label(state);
-            });
-        });
-
         let ports = serialport::available_ports().expect("No ports found!");
 
         egui::CollapsingHeader::new("Connection settings").default_open(true).show(ui, |ui| {
-            egui::Frame::group(ui.style()).inner_margin(egui::Vec2::splat(10.0)).show(ui, |ui| {
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                egui::Grid::new("state_grid").num_columns(2).spacing([50.0, 8.0]).show(ui, |ui| {
+                    let state = ConnectionState::to_string(&self.connection_state);
+                    ui.label("State:");
+                    ui.label(state);
+                    ui.end_row()
+                })
+            });
+    
+            egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.add_enabled_ui(!is_serial_connected(&self.connection_state), |ui| {
-                egui::Grid::new("my_grid")
+                egui::Grid::new("connection_settings_grid")
                     .num_columns(2)
                     .spacing([50.0, 8.0])
                     .show(ui, |ui| {
@@ -191,8 +199,20 @@ impl TensileTestingApp {
     
                                 let bru32 = self.baud_rate.parse::<u32>().unwrap();
     
+                                
                                 match serialport::new(&self.serial_port, bru32).open() {
-                                    Ok(_)  => {
+                                    Ok(mut serial_interface)  => {
+                                        
+                                        self.serial_interface = Some(serial_interface);
+
+                                        match self.serial_interface {
+                                            Some(&mut s) => {
+                                                let output = "This is a test. This is only a test.".as_bytes();                                        
+                                                s.write(output).expect("Can't write to serial");
+        
+                                            },
+                                            _ => {},
+                                        }
                                         self.connection_state = ConnectionState::Connected;
                                     }
                                     Err(err) => {
@@ -208,7 +228,7 @@ impl TensileTestingApp {
         }).fully_open();
 
         egui::CollapsingHeader::new("Controls").default_open(true).show(ui, |ui| {
-            egui::Frame::group(ui.style()).inner_margin(egui::Vec2::splat(10.0)).show(ui, |ui| {
+            egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.vertical(|ui| {
                 ui.add_enabled_ui(!matches!(self.connection_state, ConnectionState::Disconnected), |ui| {
                     ui.columns(3, |columns| {
@@ -246,7 +266,8 @@ impl eframe::App for TensileTestingApp {
             user_preferences: self.user_preferences.clone(),
             connection_state: self.connection_state.clone(),
             serial_port: String::new(),
-            baud_rate: String::new()
+            baud_rate: String::new(),
+            serial_interface: None,
         };
 
         if self.user_preferences.save_connection_settings {
