@@ -5,7 +5,7 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use egui_plot::{Line, Plot, PlotPoints};
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 enum ConnectionState {
     Connecting,
     Connected,
@@ -53,14 +53,29 @@ const USB_ICON: egui::ImageSource = egui::include_image!("../assets/usb_FILL1_wg
 
 
 
-
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(default)] // if we add new fields, give them default values when deserializing old state
-pub struct TensileTestingApp {
-    #[serde(skip)]
-    connection_state: ConnectionState,
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy)]
+pub struct UserPreferences {
     save_connection_settings: bool,
     auto_connect_on_startup: bool,
+}
+
+impl Default for UserPreferences {
+    fn default() -> Self {
+        UserPreferences {
+            save_connection_settings: true,
+            auto_connect_on_startup: false
+        }
+    }
+}
+
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct TensileTestingApp {
+    user_preferences: UserPreferences,
+
+    #[serde(skip)]
+    connection_state: ConnectionState,
     serial_port: String,
     baud_rate: String,
 }
@@ -69,8 +84,7 @@ impl Default for TensileTestingApp {
     fn default() -> Self {
         Self {
             connection_state: ConnectionState::Disconnected,
-            save_connection_settings: false,
-            auto_connect_on_startup: false,
+            user_preferences: UserPreferences::default(),
             serial_port: Default::default(),
             baud_rate: Default::default(),
         }
@@ -110,7 +124,7 @@ impl TensileTestingApp {
     }
     
     fn panel_ui(&mut self, ui: &mut egui::Ui) {
-        ui.add_visible_ui(!matches!(self.connection_state, ConnectionState::Connected), |ui| {
+        ui.add_visible_ui(is_serial_connected(&self.connection_state), |ui| {
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 let state = ConnectionState::to_string(&self.connection_state);
                 ui.label(state);
@@ -121,72 +135,100 @@ impl TensileTestingApp {
 
         egui::CollapsingHeader::new("Connection settings").default_open(true).show(ui, |ui| {
             egui::Frame::group(ui.style()).inner_margin(egui::Vec2::splat(10.0)).show(ui, |ui| {
+                ui.add_enabled_ui(!is_serial_connected(&self.connection_state), |ui| {
                 egui::Grid::new("my_grid")
                     .num_columns(2)
                     .spacing([50.0, 8.0])
                     .show(ui, |ui| {
-                        // serial port
-                        ui.label("Serial port:");
-                        egui::ComboBox::new("serial_port_combobox", "")
-                            .selected_text(&self.serial_port)
-                            .show_ui(ui, |ui| {
-                                ui.style_mut().wrap = Some(false);
-                                ui.set_min_width(60.0);
-                                for p in ports {
+                            // serial port
+                            ui.label("Serial port:");
+                            egui::ComboBox::new("serial_port_combobox", "")
+                                .selected_text(&self.serial_port)
+                                .show_ui(ui, |ui| {
+                                    ui.style_mut().wrap = Some(false);
+                                    ui.set_min_width(60.0);
+                                    for p in ports {
 
-                                    ui.selectable_value(&mut self.serial_port, p.port_name.to_string(), p.port_name);
-                                }
-                            });
-                        ui.end_row();
-    
-                        // baudrate
-                        ui.label("Baudrate:");
-                        // let resp = ui.add(egui::TextEdit::singleline(&mut self.baud_rate).hint_text("115200"));
+                                        ui.selectable_value(&mut self.serial_port, p.port_name.to_string(), p.port_name);
+                                    }
+                                });
+                            ui.end_row();
 
-
-                        egui::ComboBox::new("baud_rate_combobox", "")
-                            .selected_text(&self.baud_rate)
-                            .show_ui(ui, |ui| {
-                                ui.style_mut().wrap = Some(false);
-                                ui.set_min_width(60.0);
-                                for br in BaudRate::iter() {
-                                    ui.selectable_value(&mut self.baud_rate, br.to_string(), br.to_string());
-                                }
-                            });
-                        ui.end_row();
+                            // baudrate
+                            ui.label("Baudrate:");
+                            egui::ComboBox::new("baud_rate_combobox", "")
+                                .selected_text(&self.baud_rate)
+                                .show_ui(ui, |ui| {
+                                    ui.style_mut().wrap = Some(false);
+                                    ui.set_min_width(60.0);
+                                    for br in BaudRate::iter() {
+                                        ui.selectable_value(&mut self.baud_rate, br.to_string(), br.to_string());
+                                    }
+                                });
+                            ui.end_row();
+                        })
                     });
                     ui.add_space(8.0);
                     // save connection settings checkox
-                    ui.checkbox(&mut self.save_connection_settings, "Save connection settings");
-                    ui.checkbox(&mut self.auto_connect_on_startup, "Auto connect on startup");
+                    ui.checkbox(&mut self.user_preferences.save_connection_settings, "Save connection settings");
+                    ui.checkbox(&mut self.user_preferences.auto_connect_on_startup, "Auto connect on startup");
                     
                     ui.separator();
-                    
-                    if (matches!(self.connection_state, ConnectionState::Connected)) {
 
-                        if full_centered_button(ui, "Disconnect").clicked() {
-                            self.connection_state = ConnectionState::Disconnected
-                        }
-                    } else {
-                        if full_centered_button(ui, "Connect").clicked() {
-                            self.connection_state = ConnectionState::Connecting;
-
-                            let bru32 = self.baud_rate.parse::<u32>().unwrap();
-
-                            let openresult = serialport::new(&self.serial_port, bru32).open();
-                            match openresult {
-                                Ok(_)  => {
-                                    self.connection_state = ConnectionState::Connected;
-                                }
-                                Err(err) => {
-                                    self.connection_state = ConnectionState::Disconnected;
-                                    eprintln!("Failed {err}")
-                                },
+                    match self.connection_state {
+                        // TODO:
+                        ConnectionState::Connecting => {
+                            ui.add(egui::Spinner::new());
+                        },
+                        ConnectionState::Connected => {
+                            if full_centered_button(ui, "Disconnect").clicked() {
+                                self.connection_state = ConnectionState::Disconnected
                             }
-
-                        }
+                        },
+                        ConnectionState::Disconnected => {
+                            if full_centered_button(ui, "Connect").clicked() {
+                                self.connection_state = ConnectionState::Connecting;
+    
+                                let bru32 = self.baud_rate.parse::<u32>().unwrap();
+    
+                                match serialport::new(&self.serial_port, bru32).open() {
+                                    Ok(_)  => {
+                                        self.connection_state = ConnectionState::Connected;
+                                    }
+                                    Err(err) => {
+                                        self.connection_state = ConnectionState::Disconnected;
+                                        eprintln!("Failed {err}")
+                                    },
+                                }
+    
+                            }
+                        },
                     }
                     
+                    // if matches!(self.connection_state, ConnectionState::Connected) {
+                    //     if full_centered_button(ui, "Disconnect").clicked() {
+                    //         self.connection_state = ConnectionState::Disconnected
+                    //     }
+                    // } else {
+                    //     if full_centered_button(ui, "Connect").clicked() {
+                    //         self.connection_state = ConnectionState::Connecting;
+
+                    //         let bru32 = self.baud_rate.parse::<u32>().unwrap();
+
+                    //         match serialport::new(&self.serial_port, bru32).open() {
+                    //             Ok(_)  => {
+                    //                 self.connection_state = ConnectionState::Connected;
+                    //             }
+                    //             Err(err) => {
+                    //                 self.connection_state = ConnectionState::Disconnected;
+                    //                 eprintln!("Failed {err}")
+                    //             },
+                    //         }
+
+                    //     }
+
+
+                    // }
             });
         }).fully_open();
 
@@ -225,7 +267,18 @@ impl TensileTestingApp {
 impl eframe::App for TensileTestingApp {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, eframe::APP_KEY, self);
+        let mut state = TensileTestingApp {
+            user_preferences: self.user_preferences.clone(),
+            connection_state: self.connection_state.clone(),
+            serial_port: String::new(),
+            baud_rate: String::new()
+        };
+
+        if self.user_preferences.save_connection_settings {
+            state.serial_port = self.serial_port.clone();
+            state.baud_rate = self.baud_rate.clone()
+        }
+        eframe::set_value(storage, eframe::APP_KEY, &state);
     }
 
     /// Called each time the UI needs repainting, which may be many times per second.
@@ -253,7 +306,6 @@ impl eframe::App for TensileTestingApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-
             self.plot_ui(ui)
         });
 
@@ -283,4 +335,8 @@ fn full_centered_button(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {
 
 fn full_width(ui: &mut Ui, widget: impl egui::Widget) -> Response {
     ui.add_sized(egui::vec2(ui.available_width(), 0.0), widget)
+}
+
+fn is_serial_connected(connection_state: &ConnectionState) -> bool {
+    matches!(&connection_state, ConnectionState::Connected)
 }
