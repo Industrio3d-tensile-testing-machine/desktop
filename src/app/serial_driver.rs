@@ -45,6 +45,15 @@ impl SerialDriver {
   pub fn update(&mut self) -> Option<Values> {
     
     if let Some(_s) = self.serial_interface.as_deref_mut() {
+
+      let mut serial_buf: Vec<u8> = vec![0; 32];
+      let rres = s.read(serial_buf.as_mut_slice());
+      match rres {
+        Ok(n) => println!("Received {} bytes: {:?}", n, &serial_buf),
+        Err(e) => {
+          if e.Kind == ErrorKind::timeout { ("Got error: {e}")},
+      }
+
       // todo read and parse serial result and update values
       // check if homing is done, then reset wait_for_response
       Some(self.values)

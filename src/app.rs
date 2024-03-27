@@ -138,7 +138,7 @@ impl TensileTestingApp {
         if let Some(v) = opt_values {
             println!("Updatea values: {:?}", v);
         }
-        
+
         let ports = serialport::available_ports().expect("No ports found!");
 
         egui::CollapsingHeader::new("Connection settings").default_open(true).show(ui, |ui| {
@@ -209,7 +209,7 @@ impl TensileTestingApp {
                                 let bru32 = self.baud_rate.parse::<u32>().unwrap();
     
                                 
-                                match serialport::new(&self.serial_port, bru32).open() {
+                                match serialport::new(&self.serial_port, bru32).timeout(Duration::from_millis(10)).open() {
                                     Ok(mut serial_interface)  => {
 
                                         self.driver.set_serial(serial_interface);
