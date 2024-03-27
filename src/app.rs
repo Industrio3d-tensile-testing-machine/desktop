@@ -1,10 +1,9 @@
-use std::fmt;
+use std::{fmt::{self, Formatter}, time::Duration};
 use serialport;
 use egui::{Ui, Response, WidgetText};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use egui_plot::{Line, Plot, PlotPoints};
-
 
 mod serial_driver;
 use self::serial_driver::SerialDriver;
@@ -17,7 +16,7 @@ enum ConnectionState {
 }
 
 impl fmt::Display for ConnectionState {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{:?}", self)
     }
 }
@@ -34,7 +33,7 @@ enum BaudRate {
 }
 
 impl fmt::Display for BaudRate {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             BaudRate::B9600 => write!(f, "9600"),
             BaudRate::B19200 => write!(f, "19200"),
@@ -84,7 +83,9 @@ pub struct TensileTestingApp {
 
     #[serde(skip)]
     driver : SerialDriver,
-    //serial_interface: Option<Box<dyn serialport::SerialPort>>,
+
+    #[serde(skip)]
+    data_points : Vec<[f64;2]>,
 }
 
 impl Default for TensileTestingApp {
@@ -95,6 +96,7 @@ impl Default for TensileTestingApp {
             serial_port: Default::default(),
             baud_rate: Default::default(),
             driver : SerialDriver::new(),
+            data_points : Vec::new(),
         }
     }
 }
@@ -115,10 +117,13 @@ impl TensileTestingApp {
     }
 
     fn plot_ui(&mut self, ui: &mut egui::Ui) {
-        let sin: PlotPoints = (0..1000).map(|i| {
-            let x = i as f64 * 0.01;
-            [x, x.sin()]
-        }).collect();
+        // let sin: PlotPoints = (0..1000).map(|i| {
+        //     let x = i as f64 * 0.01;
+        //     [x, x.sin() * 3.0]
+        // }).collect();
+        // //let sin = PlotPoints::default();
+        let sin : PlotPoints = self.data_points.clone().into();
+
         let line = Line::new(sin);
         Plot::new("my_plot").view_aspect(2.0)
         .label_formatter(|name, value| {
@@ -133,11 +138,6 @@ impl TensileTestingApp {
     
     fn panel_ui(&mut self, ui: &mut egui::Ui) {
 
-        let opt_values = self.driver.update();
-
-        if let Some(v) = opt_values {
-            println!("Updatea values: {:?}", v);
-        }
 
         let ports = serialport::available_ports().expect("No ports found!");
 
@@ -248,16 +248,19 @@ impl TensileTestingApp {
 
                     ui.add_space(8.0);
                     ui.horizontal_wrapped(|ui| {
-                        if ui.add(egui::Button::image(BACK_ARROW_ICON)).on_hover_text("Jog left").clicked() {
+                        if ui.add(egui::Button::image(BACK_ARROW_ICON)).on_hover_text("Jog back").clicked() {
                             // actie wanneer de knop wordt ingedrukt
+                            let _ = self.driver.jog(-10);
                         }
         
                         if ui.add(egui::Button::image(HOME_ICON)).on_hover_text("Home").clicked() {
                             // actie wanneer de knop wordt ingedrukt
+                            let _ = self.driver.start_home();
                         }
         
-                        if ui.add(egui::Button::image(FORWARD_ARROW_ICON)).on_hover_text("Jog left").clicked() {
+                        if ui.add(egui::Button::image(FORWARD_ARROW_ICON)).on_hover_text("Jog forward").clicked() {
                             // actie wanneer de knop wordt ingedrukt
+                            let _ = self.driver.jog(10);
                         }
         
                     });
@@ -266,30 +269,37 @@ impl TensileTestingApp {
             });
         });
     }
+
+    fn update_data(&mut self) {
+        let opt_values = self.driver.update();
+
+        if let Some( values ) = opt_values {
+
+            let x = values.position as f64/ 100.0;
+            let y = values.tensile as f64/ 10.0;
+
+            self.data_points.push( [x, y] );
+            //println!("Updated values: {:?}", v);
+        }
+
+    }
+
+
 }
 
 impl eframe::App for TensileTestingApp {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        let mut state = TensileTestingApp {
-            user_preferences: self.user_preferences.clone(),
-            connection_state: self.connection_state.clone(),
-            serial_port: String::new(),
-            baud_rate: String::new(),
-            driver: SerialDriver::new(),
-        };
-
-        if self.user_preferences.save_connection_settings {
-            state.serial_port = self.serial_port.clone();
-            state.baud_rate = self.baud_rate.clone()
-        }
-        eframe::set_value(storage, eframe::APP_KEY, &state);
+        eframe::set_value(storage, eframe::APP_KEY, &self);
     }
 
+  
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
+
+        self.update_data();
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
@@ -315,6 +325,9 @@ impl eframe::App for TensileTestingApp {
         egui::SidePanel::new(egui::panel::Side::Right, "side_panel").show(ctx, |ui| {
             self.panel_ui(ui)
         });
+
+        // request new repaint
+        ctx.request_repaint();
 
     }
 }
