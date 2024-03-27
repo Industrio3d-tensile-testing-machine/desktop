@@ -1,11 +1,12 @@
-use std::fmt;
+use std::{fmt::{self, Formatter}, time::Duration};
 use serialport;
 use egui::{Ui, Response, WidgetText};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use egui_plot::{Line, Plot, PlotPoints};
 
-mod controller;
+mod serial_driver;
+use self::serial_driver::SerialDriver;
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 enum ConnectionState {
@@ -15,7 +16,7 @@ enum ConnectionState {
 }
 
 impl fmt::Display for ConnectionState {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{:?}", self)
     }
 }
@@ -32,7 +33,7 @@ enum BaudRate {
 }
 
 impl fmt::Display for BaudRate {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             BaudRate::B9600 => write!(f, "9600"),
             BaudRate::B19200 => write!(f, "19200"),
@@ -52,7 +53,6 @@ const PLAY_ARROW_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/p
 const STOP_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/stop_FILL1_wght400_GRAD0_opsz24.png");
 const PAUSE_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/pause_FILL1_wght400_GRAD0_opsz24.png");
 const USB_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/usb_FILL1_wght400_GRAD0_opsz24.png");
-
 
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Copy)]
@@ -82,7 +82,10 @@ pub struct TensileTestingApp {
     baud_rate: String,
 
     #[serde(skip)]
-    serial_interface: Option<Box<dyn serialport::SerialPort>>,
+    driver : SerialDriver,
+
+    #[serde(skip)]
+    data_points : Vec<[f64;2]>,
 }
 
 impl Default for TensileTestingApp {
@@ -92,7 +95,8 @@ impl Default for TensileTestingApp {
             user_preferences: UserPreferences::default(),
             serial_port: Default::default(),
             baud_rate: Default::default(),
-            serial_interface : None,
+            driver : SerialDriver::new(),
+            data_points : Vec::new(),
         }
     }
 }
@@ -113,10 +117,13 @@ impl TensileTestingApp {
     }
 
     fn plot_ui(&mut self, ui: &mut egui::Ui) {
-        let sin: PlotPoints = (0..1000).map(|i| {
-            let x = i as f64 * 0.01;
-            [x, x.sin()]
-        }).collect();
+        // let sin: PlotPoints = (0..1000).map(|i| {
+        //     let x = i as f64 * 0.01;
+        //     [x, x.sin() * 3.0]
+        // }).collect();
+        // //let sin = PlotPoints::default();
+        let sin : PlotPoints = self.data_points.clone().into();
+
         let line = Line::new(sin);
         Plot::new("my_plot").view_aspect(2.0)
         .label_formatter(|name, value| {
@@ -130,6 +137,8 @@ impl TensileTestingApp {
     }
     
     fn panel_ui(&mut self, ui: &mut egui::Ui) {
+
+
         let ports = serialport::available_ports().expect("No ports found!");
 
         egui::CollapsingHeader::new("Connection settings").default_open(true).show(ui, |ui| {
@@ -200,19 +209,19 @@ impl TensileTestingApp {
                                 let bru32 = self.baud_rate.parse::<u32>().unwrap();
     
                                 
-                                match serialport::new(&self.serial_port, bru32).open() {
+                                match serialport::new(&self.serial_port, bru32).timeout(Duration::from_millis(10)).open() {
                                     Ok(mut serial_interface)  => {
-                                        
-                                        self.serial_interface = Some(serial_interface);
 
-                                        match self.serial_interface {
-                                            Some(&mut s) => {
-                                                let output = "This is a test. This is only a test.".as_bytes();                                        
-                                                s.write(output).expect("Can't write to serial");
+                                        self.driver.set_serial(serial_interface);
+                                        //self.serial_interface = Some(serial_interface);
+                                        // match self.serial_interface.as_deref_mut(){
+                                        //      Some(s) => {
+                                        //         let output = "This is a test. This is only a test.".as_bytes();                                        
+                                        //         s.write(output).expect("Can't write to serial");
         
-                                            },
-                                            _ => {},
-                                        }
+                                        //      },
+                                        //     None => todo!(),
+                                        // }
                                         self.connection_state = ConnectionState::Connected;
                                     }
                                     Err(err) => {
@@ -239,16 +248,19 @@ impl TensileTestingApp {
 
                     ui.add_space(8.0);
                     ui.horizontal_wrapped(|ui| {
-                        if ui.add(egui::Button::image(BACK_ARROW_ICON)).on_hover_text("Jog left").clicked() {
+                        if ui.add(egui::Button::image(BACK_ARROW_ICON)).on_hover_text("Jog back").clicked() {
                             // actie wanneer de knop wordt ingedrukt
+                            let _ = self.driver.jog(-10);
                         }
         
                         if ui.add(egui::Button::image(HOME_ICON)).on_hover_text("Home").clicked() {
                             // actie wanneer de knop wordt ingedrukt
+                            let _ = self.driver.start_home();
                         }
         
-                        if ui.add(egui::Button::image(FORWARD_ARROW_ICON)).on_hover_text("Jog left").clicked() {
+                        if ui.add(egui::Button::image(FORWARD_ARROW_ICON)).on_hover_text("Jog forward").clicked() {
                             // actie wanneer de knop wordt ingedrukt
+                            let _ = self.driver.jog(10);
                         }
         
                     });
@@ -257,30 +269,37 @@ impl TensileTestingApp {
             });
         });
     }
+
+    fn update_data(&mut self) {
+        let opt_values = self.driver.update();
+
+        if let Some( values ) = opt_values {
+
+            let x = values.position as f64/ 100.0;
+            let y = values.tensile as f64/ 10.0;
+
+            self.data_points.push( [x, y] );
+            //println!("Updated values: {:?}", v);
+        }
+
+    }
+
+
 }
 
 impl eframe::App for TensileTestingApp {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        let mut state = TensileTestingApp {
-            user_preferences: self.user_preferences.clone(),
-            connection_state: self.connection_state.clone(),
-            serial_port: String::new(),
-            baud_rate: String::new(),
-            serial_interface: None,
-        };
-
-        if self.user_preferences.save_connection_settings {
-            state.serial_port = self.serial_port.clone();
-            state.baud_rate = self.baud_rate.clone()
-        }
-        eframe::set_value(storage, eframe::APP_KEY, &state);
+        eframe::set_value(storage, eframe::APP_KEY, &self);
     }
 
+  
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
+
+        self.update_data();
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
@@ -306,6 +325,9 @@ impl eframe::App for TensileTestingApp {
         egui::SidePanel::new(egui::panel::Side::Right, "side_panel").show(ctx, |ui| {
             self.panel_ui(ui)
         });
+
+        // request new repaint
+        ctx.request_repaint();
 
     }
 }
