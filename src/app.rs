@@ -5,7 +5,9 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use egui_plot::{Line, Plot, PlotPoints};
 
-mod controller;
+
+mod serial_driver;
+use self::serial_driver::SerialDriver;
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 enum ConnectionState {
@@ -32,7 +34,7 @@ enum BaudRate {
 }
 
 impl fmt::Display for BaudRate {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BaudRate::B9600 => write!(f, "9600"),
             BaudRate::B19200 => write!(f, "19200"),
@@ -52,7 +54,6 @@ const PLAY_ARROW_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/p
 const STOP_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/stop_FILL1_wght400_GRAD0_opsz24.png");
 const PAUSE_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/pause_FILL1_wght400_GRAD0_opsz24.png");
 const USB_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/usb_FILL1_wght400_GRAD0_opsz24.png");
-
 
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Copy)]
@@ -82,7 +83,8 @@ pub struct TensileTestingApp {
     baud_rate: String,
 
     #[serde(skip)]
-    serial_interface: Option<Box<dyn serialport::SerialPort>>,
+    driver : SerialDriver,
+    //serial_interface: Option<Box<dyn serialport::SerialPort>>,
 }
 
 impl Default for TensileTestingApp {
@@ -92,7 +94,7 @@ impl Default for TensileTestingApp {
             user_preferences: UserPreferences::default(),
             serial_port: Default::default(),
             baud_rate: Default::default(),
-            serial_interface : None,
+            driver : SerialDriver::new(),
         }
     }
 }
@@ -130,6 +132,13 @@ impl TensileTestingApp {
     }
     
     fn panel_ui(&mut self, ui: &mut egui::Ui) {
+
+        let opt_values = self.driver.update();
+
+        if let Some(v) = opt_values {
+            println!("Updatea values: {:?}", v);
+        }
+        
         let ports = serialport::available_ports().expect("No ports found!");
 
         egui::CollapsingHeader::new("Connection settings").default_open(true).show(ui, |ui| {
@@ -202,17 +211,17 @@ impl TensileTestingApp {
                                 
                                 match serialport::new(&self.serial_port, bru32).open() {
                                     Ok(mut serial_interface)  => {
-                                        
-                                        self.serial_interface = Some(serial_interface);
 
-                                        match self.serial_interface {
-                                            Some(&mut s) => {
-                                                let output = "This is a test. This is only a test.".as_bytes();                                        
-                                                s.write(output).expect("Can't write to serial");
+                                        self.driver.set_serial(serial_interface);
+                                        //self.serial_interface = Some(serial_interface);
+                                        // match self.serial_interface.as_deref_mut(){
+                                        //      Some(s) => {
+                                        //         let output = "This is a test. This is only a test.".as_bytes();                                        
+                                        //         s.write(output).expect("Can't write to serial");
         
-                                            },
-                                            _ => {},
-                                        }
+                                        //      },
+                                        //     None => todo!(),
+                                        // }
                                         self.connection_state = ConnectionState::Connected;
                                     }
                                     Err(err) => {
@@ -267,7 +276,7 @@ impl eframe::App for TensileTestingApp {
             connection_state: self.connection_state.clone(),
             serial_port: String::new(),
             baud_rate: String::new(),
-            serial_interface: None,
+            driver: SerialDriver::new(),
         };
 
         if self.user_preferences.save_connection_settings {
