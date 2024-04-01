@@ -25,6 +25,7 @@ strum = "0.26.2"
 strum_macros = "0.26.2"
 egui_tiles = "0.7.2"
 anyhow = "1.0.81"
+egui-toast = "0.12.1"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
