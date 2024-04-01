@@ -46,14 +46,6 @@ impl fmt::Display for BaudRate {
     }
 }
 
-const BACK_ARROW_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/arrow_back_FILL1_wght400_GRAD0_opsz24.png");
-const FORWARD_ARROW_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/arrow_forward_FILL1_wght400_GRAD0_opsz24.png");
-const HOME_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/home_FILL1_wght400_GRAD0_opsz24.png");
-const PLAY_ARROW_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/play_arrow_FILL1_wght400_GRAD0_opsz24.png");
-const STOP_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/stop_FILL1_wght400_GRAD0_opsz24.png");
-const PAUSE_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/pause_FILL1_wght400_GRAD0_opsz24.png");
-const USB_ICON: egui::ImageSource<'_> = egui::include_image!("../assets/usb_FILL1_wght400_GRAD0_opsz24.png");
-
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Copy)]
 pub struct UserPreferences {
