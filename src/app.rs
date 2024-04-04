@@ -1,5 +1,11 @@
+use crate::{
+    button,
+    ButtonVariant, SECONDARY, GREY_WHITE, PRIMARY_COLOR, icon_button
+};
+
 use std::{fmt::{self, Formatter}, ops::RangeInclusive};
-use egui::{Ui, Response, WidgetText, Align2, Vec2, Color32};
+use egui::{Ui, Response, WidgetText, Align2, Vec2, Color32, style::WidgetVisuals, Rounding, Stroke};
+use log::debug;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use egui_plot::{Line, Plot, PlotPoints};
@@ -11,8 +17,6 @@ use self::serial_driver::SerialDriver;
 
 const INDUSTRIO_LOGO: egui::ImageSource<'_> = egui::include_image!("../assets/logo.png");
 const SPECIMEN_DIAGRAM: egui::ImageSource<'_> = egui::include_image!("../assets/specimen.png");
-
-const INDUSTRIO_PRIMARY_COLOR_RGB: Color32 = egui::Color32::from_rgb(204, 0, 2);
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 enum ConnectionState {
@@ -52,7 +56,6 @@ impl fmt::Display for BaudRate {
     }
 }
 
-
 #[derive(serde::Deserialize, serde::Serialize, Clone, Copy)]
 pub struct UserPreferences {
     save_connection_settings: bool,
@@ -68,11 +71,21 @@ impl Default for UserPreferences {
     }
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Default)]
+#[derive(serde::Deserialize, serde::Serialize)]
 pub struct TestParamters {
     speed: f64,
     area: f64,
     max_distance: f64
+}
+
+impl Default for TestParamters {
+    fn default() -> Self {
+        Self {
+            speed: 1.0,
+            area: Default::default(),
+            max_distance: Default::default()
+        }
+    }
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -86,6 +99,11 @@ pub struct TensileTestingApp {
     baud_rate: String,
     
     test_parameters: TestParamters,
+    jog_control_step_distance: f32,
+
+    is_testing: bool,
+    #[serde(skip)]
+    start_data_point: Option<(f64, f64)>,
 
     #[serde(skip)]
     driver : SerialDriver,
@@ -105,6 +123,9 @@ impl Default for TensileTestingApp {
             serial_port: Default::default(),
             baud_rate: Default::default(),
             test_parameters: Default::default(),
+            jog_control_step_distance: 1.0,
+            is_testing: false,
+            start_data_point: Default::default(),
             driver : SerialDriver::new(),
             toast: Toasts::new().anchor(Align2::LEFT_TOP, (10.0, 10.0)).direction(egui::Direction::TopDown),
             data_points : Vec::new(),
@@ -117,6 +138,11 @@ impl TensileTestingApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // This is also where you can customize the look and feel of egui using
         // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
+
+        let mut style = (*cc.egui_ctx.style()).clone();
+        style.visuals.selection.bg_fill = PRIMARY_COLOR;
+
+        cc.egui_ctx.set_style(style);
 
         // Load previous app state (if any).
         // Note that you must enable the `persistence` feature for this to work.
@@ -217,13 +243,17 @@ impl TensileTestingApp {
                             ui.add(egui::Spinner::new());
                         },
                         ConnectionState::Connected => {
-                            if full_centered_button(ui, "Disconnect").clicked() {
+                            if render_full_width(ui, button("Disconnect", ButtonVariant::Secondary)).clicked() {
                                 self.connection_state = ConnectionState::Disconnected;
-                                self.driver.close();
+                                self.driver.close(); 
                             }
+                            // if full_centered_button(ui, "Disconnect").clicked() {
+                            //     self.connection_state = ConnectionState::Disconnected;
+                            //     self.driver.close();
+                            // }
                         },
                         ConnectionState::Disconnected => {
-                            if full_centered_button(ui, "Connect").clicked() {
+                            if render_full_width(ui, button("Connect", ButtonVariant::Secondary)).clicked() {
                                 self.connection_state = ConnectionState::Connecting;
     
                                 let bru32 = self.baud_rate.parse::<u32>().unwrap();
@@ -261,11 +291,19 @@ impl TensileTestingApp {
         egui::CollapsingHeader::new("Controls").open(Some(is_serial_connected(&self.connection_state))).show(ui, |ui| {
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.vertical_centered_justified(|ui| {
-                    ui.add_enabled_ui(!matches!(self.connection_state, ConnectionState::Disconnected), |ui| {
+                    ui.add_enabled_ui(is_serial_connected(&self.connection_state), |ui| {
                         ui.columns(3, |columns| {
-                            columns[0].add(egui::Button::image_and_text(icons::PLAY_ARROW_ICON, "Start").fill(INDUSTRIO_PRIMARY_COLOR_RGB));
-                            columns[1].add(egui::Button::image_and_text(icons::PAUSE_ICON, "Pause"));
-                            columns[2].add(egui::Button::image_and_text(icons::STOP_ICON, "Cancel"))
+                            if columns[0].add(icon_button(icons::PLAY_ARROW_ICON, "Start", ButtonVariant::Primary)).clicked() {
+                                let _ = self.driver.start_test(self.test_parameters.speed);
+                                self.is_testing = true;
+                                self.data_points.clear();
+                                self.start_data_point = None;
+                            };
+                            columns[1].add(icon_button(icons::PAUSE_ICON, "Pause", ButtonVariant::Secondary));
+                            if columns[2].add(icon_button(icons::STOP_ICON, "Cancel", ButtonVariant::Secondary)).clicked() {
+                                self.driver.cancel_test();
+                                self.is_testing = false;
+                            }
                         });
 
                         ui.add_space(8.0);
@@ -273,18 +311,38 @@ impl TensileTestingApp {
                             ui.horizontal_wrapped(|ui| {
                                 if ui.add_enabled(self.driver.is_homed(), egui::Button::image(icons::BACK_ARROW_ICON)).on_hover_text("Jog back").clicked() {
                                     // TODO: error
-                                    let _ = self.driver.jog(10).is_err();
+                                    let _ = self.driver.jog(self.jog_control_step_distance).is_err();
                                 }
+
+                                // debug!("ackknowledge pending in ui: {}", self.driver.is_acknowledge_pending());
                 
                                 if ui.add(egui::Button::image(icons::HOME_ICON)).on_hover_text("Home").clicked() {
+                                    self.is_testing = false;
                                     // actie wanneer de knop wordt ingedrukt
-                                    let _ = self.driver.start_home();
+                                    let result = self.driver.start_home();
+
+                                    match result {
+                                        Ok(_) => {},
+                                        Err(err) => {
+                                            self.toast.add(Toast {
+                                                text: err.to_string().into(),
+                                                kind: ToastKind::Info,
+                                                options: ToastOptions::default().duration_in_seconds(1.0)
+                                            });
+                                        },
+                                    };
                                 }
                 
                                 if ui.add_enabled(self.driver.is_homed(), egui::Button::image(icons::FORWARD_ARROW_ICON)).on_hover_text("Jog forward").clicked() {
                                     // actie wanneer de knop wordt ingedrukt
-                                    let _ = self.driver.jog(-10);
+                                    let _ = self.driver.jog(-self.jog_control_step_distance);
                                 }
+                            });
+
+                            ui.horizontal_centered(|ui| {
+                                if ui.add(egui::SelectableLabel::new(self.jog_control_step_distance == 0.1, "0.1")).clicked() { self.jog_control_step_distance = 0.1 };
+                                if ui.add(egui::SelectableLabel::new(self.jog_control_step_distance == 1.0, "1")).clicked() { self.jog_control_step_distance = 1.0 };
+                                if ui.add(egui::SelectableLabel::new(self.jog_control_step_distance == 10.0, "10")).clicked() { self.jog_control_step_distance = 10.0 };
                             });
                         })
                     });
@@ -310,7 +368,7 @@ impl TensileTestingApp {
                     .spacing([0.0, 8.0])
                     .show(ui, |ui| {
                         ui.label("Speed:");
-                        ui.add(egui::DragValue::new(&mut self.test_parameters.speed).suffix("mm/s").clamp_range(RangeInclusive::new(0, 100)));
+                        ui.add(egui::DragValue::new(&mut self.test_parameters.speed).suffix("mm/s").clamp_range(RangeInclusive::new(0.01, 10.0)));
                         ui.end_row();
 
                         ui.label("Max distance:");
@@ -330,12 +388,25 @@ impl TensileTestingApp {
         let opt_values = self.driver.update();
 
         if let Some( values ) = opt_values {
+            if (self.is_testing) {
+                let x = values.position as f64/ 100.0;
+                let f = values.tensile as f64/ 10.0;
 
-            let x = values.position as f64/ 100.0;
-            let y = values.tensile as f64/ 10.0;
+                // debug!("data update x:{}, f:{}", x, f);
 
-            self.data_points.push( [x, y] );
-            //println!("Updated values: {:?}", v);
+                if let Some((start_pos, start_force)) = self.start_data_point {
+                    let pos = start_pos - x;
+                    let force = f - start_force;
+                    self.data_points.push([pos, force]);
+                } else {
+                    self.start_data_point = Some((x, f));
+                    self.data_points.push([0.0, 0.0]);
+                }
+    
+                if !self.driver.is_acknowledge_pending() {
+                    self.is_testing = false
+                }
+            }
         }
 
     }
@@ -351,13 +422,24 @@ impl eframe::App for TensileTestingApp {
   
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-
+        // debug!("ui update");
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::H)) {
-            let _ = self.driver.start_home();
+            let result = self.driver.start_home();
+
+            match result {
+                Ok(_) => {},
+                Err(err) => {
+                    self.toast.add(Toast {
+                        text: err.to_string().into(),
+                        kind: ToastKind::Info,
+                        options: ToastOptions::default().duration_in_seconds(1.0)
+                    });
+                },
+            };
         }
 
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)) {
-            let result = self.driver.jog(10);
+            let result = self.driver.jog(self.jog_control_step_distance);
 
             match result {
                 Ok(_) => {},
@@ -372,7 +454,7 @@ impl eframe::App for TensileTestingApp {
         }
 
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)) {
-            let result = self.driver.jog(-10);
+            let result = self.driver.jog(-self.jog_control_step_distance);
 
             match result {
                 Ok(_) => {},
@@ -416,6 +498,7 @@ impl eframe::App for TensileTestingApp {
             })
         });
 
+        // debug!("request repaint");
         // request new repaint
         ctx.request_repaint();
         self.toast.show(ctx);
@@ -426,12 +509,7 @@ impl eframe::App for TensileTestingApp {
     }
 }
 
-
-fn full_centered_button(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {
-    full_width(ui, egui::Button::new(text))
-}
-
-fn full_width(ui: &mut Ui, widget: impl egui::Widget) -> Response {
+fn render_full_width(ui: &mut Ui, widget: impl egui::Widget) -> Response {
     ui.add_sized(egui::vec2(ui.available_width(), 0.0), widget)
 }
 

@@ -1,6 +1,6 @@
 use std::{io::BufRead, time::Duration};
 use anyhow::ensure;
-use serialport::{self, SerialPort, Error, SerialPortInfo};
+use serialport::{self, Error, SerialPortInfo};
 use log::{info, debug, error};
 
 #[derive(Debug, Default, Copy, Clone)]
@@ -49,26 +49,49 @@ impl SerialDriver {
   }
 
   pub fn start_home(&mut self) -> anyhow::Result<()> {
+    ensure!(self.serial_interface.is_some(), "No serial interface initialized");
     ensure!(!self.acknowledge_pending, "Homing in progress");
+
+    // if self.is_homed {
+    //   anyhow::bail!("Already homed")
+    // }
+
     self.acknowledge_pending = true;
     let res = self.send_message("G28\r\n");
     self.is_homed = true;
     res
   }
 
-  pub fn jog(&mut self, delta: i32) -> anyhow::Result<()>  {
+  pub fn jog(&mut self, delta: f32) -> anyhow::Result<()>  {
+    ensure!(self.serial_interface.is_some(), "No serial interface initialized");
     ensure!(!self.acknowledge_pending, "Jog in progress");
     ensure!(self.is_homed, "Tensile tester not homed, please home first");
 
-    let pos = i32::max( self.values.position as i32 + delta, 0 );
+    let pos = f32::max( self.values.position + delta, 0.0 );
+    // println!("current pos: {}, delta: {}, pos: {}", self.values.position, delta, pos);
+
     // debug!("new pos: {pos}");
 
     let msg = format!("G0 X{pos}\r\n" );
     self.send_message(&msg)
   }
 
-  pub fn babystep(&mut self) -> anyhow::Result<()> {
-    todo!();
+  pub fn start_test(&mut self, speed: f64) -> anyhow::Result<()> {
+    ensure!(self.serial_interface.is_some(), "No serial interface initialized");
+    ensure!(!self.acknowledge_pending, "Test in progress");
+    ensure!(self.is_homed, "Tensile tester not homed, please home first");
+
+    self.acknowledge_pending = true;
+
+    let s = speed as f32;
+    let msg = format!("M700 S{s}\r\n" );
+    let res = self.send_message(&msg);
+
+    res
+  }
+
+  pub fn cancel_test(&mut self) {
+    let _ = self.start_home();
   }
 
   pub fn update(&mut self) -> Option<Values> {
@@ -89,6 +112,7 @@ impl SerialDriver {
                 if let Some(tag) = line_parts.next() {
                   if tag.contains("ok") {
                     self.acknowledge_pending = false;
+                    break;
                   }
 
                   if tag.contains("X:") {
@@ -101,7 +125,8 @@ impl SerialDriver {
                   if tag.contains("T:") {
                     let val = &tag[2..];
                     self.values.tensile = val.parse().unwrap();
-                }
+                    break;
+                  }
                 }
             },
             Err(e) => {
@@ -121,14 +146,11 @@ impl SerialDriver {
   }
 
   pub fn send_message(&mut self, msg : &str) -> anyhow::Result<()> {
-
-    info!("SENDING MESSAGE:{}:", msg);
     let bts = msg.as_bytes();
 
     match self.serial_interface.as_deref_mut() {
       Some(s) => {
         let bytes_written = s.write(bts)?;
-        debug!("Wrote: {bytes_written} bytes");
          s.flush()?;
          Ok(())
       },
