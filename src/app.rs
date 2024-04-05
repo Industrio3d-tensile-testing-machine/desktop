@@ -492,9 +492,11 @@ impl eframe::App for TensileTestingApp {
         });
 
         egui::SidePanel::new(egui::panel::Side::Right, "side_panel").show(ctx, |ui| {
-            self.panel_ui(ui);
-            ui.vertical_centered_justified(|ui| {
-                ui.small("v1.0.0 - ©Industrio");
+            egui::ScrollArea::new([false, true]).show(ui, |ui| {
+                self.panel_ui(ui);
+                ui.vertical_centered_justified(|ui| {
+                    ui.small("v1.0.0 - ©Industrio");
+                })
             })
         });
 
